@@ -204,15 +204,26 @@ async function callbackOutput(state, recipe, kind, file) {
   url.searchParams.set("jobId", state.id);
   url.searchParams.set("variantId", String(recipe.variantId || recipe.id || ""));
   url.searchParams.set("kind", kind);
-  const response = await fetch(url, {
-    method: "PUT",
-    headers: {
-      "content-type": kind === "video" ? "video/mp4" : "image/jpeg",
-      "x-cloud-token": state.callbackToken,
-    },
-    body,
-  });
-  if (!response.ok) throw new Error("Callback failed " + response.status + ": " + await response.text());
+  let lastError = null;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "content-type": kind === "video" ? "video/mp4" : "image/jpeg",
+          "content-length": String(body.byteLength),
+          "x-cloud-token": state.callbackToken,
+        },
+        body,
+      });
+      if (response.ok) return;
+      lastError = new Error("Callback failed " + response.status + ": " + await response.text());
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 750 * (2 ** (attempt - 1))));
+  }
+  throw lastError instanceof Error ? lastError : new Error("Persistent output callback failed");
 }
 async function renderVariant(state, recipe, index) {
   const source = path.join(state.dir, "source.mp4");
