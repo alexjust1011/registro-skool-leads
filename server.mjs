@@ -223,7 +223,7 @@ async function callbackOutput(state, recipe, kind, file) {
     }
     if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 750 * (2 ** (attempt - 1))));
   }
-  throw lastError instanceof Error ? lastError : new Error("Persistent output callback failed");
+  console.warn("Persistent output callback unavailable; keeping local result for later import", lastError);
 }
 async function renderVariant(state, recipe, index) {
   const source = path.join(state.dir, "source.mp4");
