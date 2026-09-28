@@ -350,8 +350,15 @@ async function handle(req, res) {
     if (!["uploading", "queued"].includes(state.status)) return json(req, res, 409, { ok: false, error: "job already started" });
     const body = await readJson(req);
     const extra = Array.isArray(body.recipes) ? body.recipes : [];
-    if (state.recipes.length + extra.length > 30) return json(req, res, 400, { ok: false, error: "maximum 30 variants" });
-    state.recipes.push(...extra);
+    const existing = new Set(state.recipes.map(r => String(r.variantId || r.id || "")));
+    const fresh = extra.filter(r => {
+      const id = String(r.variantId || r.id || "");
+      if (!id || existing.has(id)) return false;
+      existing.add(id);
+      return true;
+    });
+    if (state.recipes.length + fresh.length > 30) return json(req, res, 400, { ok: false, error: "maximum 30 variants" });
+    state.recipes.push(...fresh);
     state.variants = state.recipes.map((r, i) => state.variants[i] || ({ position: i + 1, variantId: r.variantId, status: "queued" }));
     await saveState(state);
     return json(req, res, 200, { ok: true, total: state.recipes.length });
