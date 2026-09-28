@@ -262,12 +262,26 @@ async function renderJob(state) {
   state.status = "running"; state.progress = 0; state.error = null; await saveState(state);
   const recipes = state.recipes || [];
   const concurrency = Math.min(3, Math.max(1, Number(process.env.VARIANTLAB_CONCURRENCY || state.concurrency || 1)));
+  const localPriorityCount = Math.max(0, Math.min(recipes.length, Number(state.localPriorityCount || 0)));
+  const order = [
+    ...Array.from({ length: Math.max(0, recipes.length - localPriorityCount) }, (_, i) => i + localPriorityCount),
+    ...Array.from({ length: localPriorityCount }, (_, i) => i),
+  ];
   let cursor = 0, done = 0;
   async function worker() {
     while (true) {
-      const index = cursor++;
-      if (index >= recipes.length) return;
+      const orderIndex = cursor++;
+      if (orderIndex >= order.length) return;
+      const index = order[orderIndex];
       const recipe = recipes[index];
+      const skipped = new Set(state.skippedVariantIds || []);
+      if (skipped.has(String(recipe.variantId || recipe.id || ""))) {
+        state.variants[index] = { position: index + 1, variantId: recipe.variantId, status: "skipped" };
+        done += 1;
+        state.progress = Math.round(done * 100 / Math.max(1, recipes.length));
+        await saveState(state);
+        continue;
+      }
       state.variants[index] = { position: index + 1, variantId: recipe.variantId, status: "running" };
       await saveState(state);
       try {
@@ -287,7 +301,7 @@ async function renderJob(state) {
   state.progress = 100;
   state.error = failed ? "Una o más variantes fallaron." : null;
   await saveState(state);
-  setTimeout(() => fsp.rm(state.dir, { recursive: true, force: true }).catch(() => undefined), 6 * 60 * 60 * 1000).unref?.();
+  setTimeout(() => fsp.rm(state.dir, { recursive: true, force: true }).catch(() => undefined), 24 * 60 * 60 * 1000).unref?.();
 }
 async function assembleSource(state, total) {
   const target = path.join(state.dir, "source.mp4");
@@ -337,6 +351,8 @@ async function handle(req, res) {
       faceAnchor: body.faceAnchor || { x: .5, y: .42 },
       callbackUrl: String(body.callbackUrl || ""),
       callbackToken: String(body.callbackToken || ""),
+      localPriorityCount: Math.max(0, Math.min(30, Number(body.localPriorityCount || 0))),
+      skippedVariantIds: [],
       variants: recipes.map((r, i) => ({ position: i + 1, variantId: r.variantId, status: "queued" })),
     };
     jobs.set(id, state); await saveState(state);
@@ -362,6 +378,28 @@ async function handle(req, res) {
     state.variants = state.recipes.map((r, i) => state.variants[i] || ({ position: i + 1, variantId: r.variantId, status: "queued" }));
     await saveState(state);
     return json(req, res, 200, { ok: true, total: state.recipes.length });
+  }
+
+  match = url.pathname.match(/^\/jobs\/([^/]+)\/skip$/);
+  if (req.method === "PATCH" && match) {
+    const state = await loadState(safeId(match[1])); if (!state) return json(req, res, 404, { ok: false });
+    if (!stateAuth(req, state)) return json(req, res, 401, { ok: false, error: "unauthorized" });
+    const body = await readJson(req);
+    const incoming = Array.isArray(body.variantIds) ? body.variantIds.map(String) : [];
+    const existing = new Set(state.skippedVariantIds || []);
+    for (const id of incoming) if (id) existing.add(id);
+    state.skippedVariantIds = [...existing];
+    await saveState(state);
+    return json(req, res, 200, { ok: true, skipped: state.skippedVariantIds.length });
+  }
+
+  match = url.pathname.match(/^\/jobs\/([^/]+)\/cleanup$/);
+  if (req.method === "POST" && match) {
+    const state = await loadState(safeId(match[1])); if (!state) return json(req, res, 404, { ok: false });
+    if (!stateAuth(req, state)) return json(req, res, 401, { ok: false, error: "unauthorized" });
+    jobs.delete(state.id);
+    await fsp.rm(state.dir, { recursive: true, force: true }).catch(() => undefined);
+    return json(req, res, 200, { ok: true });
   }
 
   match = url.pathname.match(/^\/jobs\/([^/]+)\/chunks\/(\d+)$/);
