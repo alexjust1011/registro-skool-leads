@@ -248,7 +248,7 @@ async function renderVariant(state, recipe, index) {
 
   const args = ["-i", source, "-filter_complex", graph.join(";"), "-map", "[vout]"];
   if (info.hasAudio) args.push("-map", "[acat]");
-  args.push("-t", duration.toFixed(3), "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p");
+  args.push("-t", duration.toFixed(3), "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-threads", "1", "-pix_fmt", "yuv420p");
   if (info.hasAudio) args.push("-c:a", "aac", "-b:a", "128k");
   args.push("-movflags", "+faststart", output);
 
@@ -261,7 +261,7 @@ async function renderVariant(state, recipe, index) {
 async function renderJob(state) {
   state.status = "running"; state.progress = 0; state.error = null; await saveState(state);
   const recipes = state.recipes || [];
-  const concurrency = Math.min(3, Math.max(1, Number(state.concurrency || 2)));
+  const concurrency = Math.min(3, Math.max(1, Number(process.env.VARIANTLAB_CONCURRENCY || state.concurrency || 1)));
   let cursor = 0, done = 0;
   async function worker() {
     while (true) {
